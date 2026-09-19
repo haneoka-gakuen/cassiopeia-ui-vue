@@ -1,0 +1,60 @@
+{
+  "name": "@haneoka/cassiopeia-ui-vue",
+  "version": "0.1.0",
+  "license": "MPL-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/haneoka-gakuen/cassiopeia-ui-vue.git"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json",
+    "./player": {
+      "types": "./dist/player-entry.d.ts",
+      "import": "./dist/player.js"
+    },
+    "./overview": {
+      "types": "./dist/overview-entry.d.ts",
+      "import": "./dist/overview.js"
+    }
+  },
+  "scripts": {
+    "build": "vite build && vue-tsc -p tsconfig.build.json",
+    "typecheck": "vue-tsc -p tsconfig.json --noEmit",
+    "check": "pnpm typecheck && pnpm build && pnpm test:runtime",
+    "test:runtime": "node tests/title-introduction.mjs && node tests/vue-frame-clock.mjs"
+  },
+  "peerDependencies": {
+    "@haneoka/cassiopeia": "^0.1.0",
+    "@haneoka/cassiopeia-plugin-our-notes": "^0.1.0",
+    "@haneoka/cassiopeia-renderer-three": "^0.1.0",
+    "@haneoka/cassiopeia-host-web": "^0.1.0",
+    "vue": ">=3.5.0 <4"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.0",
+    "typescript": "^6.0.3",
+    "vite": "^7.3.6",
+    "vue": "3.5.39",
+    "@vitejs/plugin-vue": "^6.0.7",
+    "@vue/compiler-sfc": "^3.5.39",
+    "vue-tsc": "^3.3.6"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@11.14.0",
+  "description": "Vue player and overview composed from Cassiopeia plugins"
+}
