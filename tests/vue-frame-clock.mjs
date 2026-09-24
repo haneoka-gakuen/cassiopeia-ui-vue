@@ -3,10 +3,7 @@ import { readFile } from "node:fs/promises";
 
 const playerUrl = new URL("../src/vue/ChartPlayer.vue", import.meta.url);
 const typesUrl = new URL("../src/vue/types.ts", import.meta.url);
-const [player, types] = await Promise.all([
-  readFile(playerUrl, "utf8"),
-  readFile(typesUrl, "utf8"),
-]);
+const [player, types] = await Promise.all([readFile(playerUrl, "utf8"), readFile(typesUrl, "utf8")]);
 
 function functionBody(source, name) {
   const signature = `function ${name}(`;

@@ -105,6 +105,7 @@ const canvasOverlaySpriteNames = new Set([
   "slide_decoration",
   "slide_connection_icon",
   ...["S", "M", "L", "LL"].map((size) => `notes_flick_arrow_upper_${size}`),
+  ...Array.from({ length: 8 }, (_, index) => `notes_flick_arrow_upper_${String(index + 1).padStart(2, "0")}`),
   ...["left", "right"].flatMap((direction) =>
     Array.from({ length: 8 }, (_, index) => `notes_flick_arrow_${direction}_${String(index + 1).padStart(2, "0")}`),
   ),
@@ -179,7 +180,7 @@ function drawTightSpriteOverlay(
 }
 
 /**
- * Canvas renderer for the original skin001 note sprites used by both the
+ * Canvas renderer for the selected native note sprites used by both the
  * overview and authoring surfaces. Missing atlas data fails closed: no
  * geometric or palette substitute is emitted.
  */
@@ -190,12 +191,17 @@ export class ChartCanvasSkin {
   private constructor(
     private readonly atlas: CanvasSpriteAtlas,
     private readonly tiltThresholds: OurNotesAssetManifest["tiltThresholds"],
+    private readonly noteSkin: OurNotesAssetManifest["source"]["noteSkin"],
   ) {
     this.missingSprites = atlas.missingSprites;
   }
 
   static async load(assets: OurNotesAssetManifest): Promise<ChartCanvasSkin> {
-    return new ChartCanvasSkin(await CanvasSpriteAtlas.load(canvasAtlasManifest(assets)), assets.tiltThresholds);
+    return new ChartCanvasSkin(
+      await CanvasSpriteAtlas.load(canvasAtlasManifest(assets)),
+      assets.tiltThresholds,
+      assets.source.noteSkin,
+    );
   }
 
   drawNote(context: CanvasRenderingContext2D, note: ChartCanvasNote): boolean {
@@ -301,7 +307,10 @@ export class ChartCanvasSkin {
       );
     }
 
-    const arrowName = noteSkinArrowName({ kind: note.kind, direction: note.direction, width: note.laneSpan });
+    const arrowName = noteSkinArrowName(
+      { kind: note.kind, direction: note.direction, width: note.laneSpan },
+      this.noteSkin,
+    );
     const arrow = arrowName ? this.cachedSprite(arrowName) : undefined;
     if (arrow && arrowName) {
       drawTightSpriteOverlay(

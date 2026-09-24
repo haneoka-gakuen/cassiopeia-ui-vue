@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
-import { DEFAULT_TITLE_INTRODUCTION_TIMING, TitleIntroductionPresentation, sampleTitleIntroduction } from "@haneoka/cassiopeia-plugin-our-notes";
+import {
+  DEFAULT_TITLE_INTRODUCTION_TIMING,
+  TitleIntroductionPresentation,
+  sampleTitleIntroduction,
+} from "@haneoka/cassiopeia-plugin-our-notes";
 import {
   DEFAULT_FINISH_DIRECTION_DURATION_MS,
   PlayerFinishDirectionLifecycle,
@@ -37,10 +41,7 @@ assert.deepEqual(at(0), {
 assert.equal(at(timing.displayStartMs - epsilon).state, "hidden");
 assert.equal(at(timing.displayStartMs).state, "showing");
 assert.equal(at(timing.displayStartMs).alpha, 0);
-assert.equal(
-  at((timing.displayStartMs + timing.holdStartMs) / 2).alpha,
-  0.5,
-);
+assert.equal(at((timing.displayStartMs + timing.holdStartMs) / 2).alpha, 0.5);
 assert.equal(at(timing.holdStartMs - epsilon).state, "showing");
 assert.ok(at(timing.holdStartMs - epsilon).alpha > 0.99);
 assert.equal(at(timing.holdStartMs).state, "holding");
@@ -49,10 +50,7 @@ assert.equal(at(timing.holdStartMs).contentAlpha, 0);
 assert.equal(at((timing.holdStartMs + timing.contentShowEndMs) / 2).contentAlpha, 0.5);
 assert.equal(at(timing.contentShowEndMs).contentAlpha, 1);
 assert.equal(at(timing.normalShowStartMs).leftAlpha, 0);
-assert.equal(
-  at((timing.normalShowStartMs + timing.normalShowEndMs) / 2).leftAlpha,
-  0.5,
-);
+assert.equal(at((timing.normalShowStartMs + timing.normalShowEndMs) / 2).leftAlpha, 0.5);
 assert.equal(at(timing.normalShowEndMs).leftAlpha, 1);
 assert.equal(at(timing.normalShowEndMs).rightAlpha, 1);
 assert.equal(at(timing.normalShowEndMs).centerAlpha, 1);
@@ -212,6 +210,4 @@ assert.equal(finishDirection.pending, false);
 assert.throws(() => finishDirection.start(Number.NaN), RangeError);
 assert.throws(() => finishDirection.update(Number.POSITIVE_INFINITY), RangeError);
 
-console.log(
-  "Title introduction and finish direction: boundary, pause, reset, disable, and sampler checks passed",
-);
+console.log("Title introduction and finish direction: boundary, pause, reset, disable, and sampler checks passed");

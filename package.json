@@ -34,7 +34,9 @@
     "build": "vite build && vue-tsc -p tsconfig.build.json",
     "typecheck": "vue-tsc -p tsconfig.json --noEmit",
     "check": "pnpm typecheck && pnpm build && pnpm test:runtime",
-    "test:runtime": "node tests/title-introduction.mjs && node tests/vue-frame-clock.mjs"
+    "test:runtime": "node tests/title-introduction.mjs && node tests/vue-frame-clock.mjs",
+    "format": "prettier --write . --ignore-unknown",
+    "format:check": "prettier --check . --ignore-unknown"
   },
   "peerDependencies": {
     "@haneoka/cassiopeia": "^0.1.0",
@@ -50,7 +52,8 @@
     "vue": "3.5.39",
     "@vitejs/plugin-vue": "^6.0.7",
     "@vue/compiler-sfc": "^3.5.39",
-    "vue-tsc": "^3.3.6"
+    "vue-tsc": "^3.3.6",
+    "prettier": "3.7.4"
   },
   "engines": {
     "node": ">=24"
