@@ -543,7 +543,7 @@ function attachInput(): void {
         laneAtClientPoint: (clientX, clientY) => renderer?.clientPointToLane(clientX, clientY) ?? 12,
         // PointerEvent coordinates are CSS pixels; CSS defines one inch as 96px.
         screenDpi: 96,
-        flickDistanceCm: 0.1,
+        flickDistanceCm: 0.2,
       },
     );
 }
