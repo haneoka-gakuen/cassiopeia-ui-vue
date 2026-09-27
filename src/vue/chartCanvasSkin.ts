@@ -31,6 +31,8 @@ interface CachedCanvasSprite {
   bounds: NoteSkinSpriteBounds;
 }
 
+const EMPTY_SPRITE_BOUNDS: NoteSkinSpriteBounds = { width: 0, height: 0, centerX: 0, centerY: 0 };
+
 export interface ChartCanvasNote {
   kind: RenderNoteKind;
   /** Effective visual direction. Pass the mirrored direction when the lane is mirrored. */
@@ -163,7 +165,7 @@ function drawTightSpriteQuad(
 function drawTightSpriteOverlay(
   context: CanvasRenderingContext2D,
   sprite: CachedCanvasSprite,
-  layout: { centerX: number; centerY: number; width: number; height: number; rotation: number },
+  layout: { centerX: number; centerY: number; width: number; height: number; rotation: number; alpha: number },
   originX: number,
   originY: number,
   nativeToCss: number,
@@ -172,6 +174,7 @@ function drawTightSpriteOverlay(
   const height = layout.height * nativeToCss;
   if (width <= 0 || height <= 0) return;
   context.save();
+  context.globalAlpha *= layout.alpha;
   context.translate(originX + layout.centerX * nativeToCss, originY - layout.centerY * nativeToCss);
   // Shared layout is in Unity/Three's y-up coordinates; Canvas is y-down.
   context.rotate(-layout.rotation);
@@ -206,30 +209,34 @@ export class ChartCanvasSkin {
 
   drawNote(context: CanvasRenderingContext2D, note: ChartCanvasNote): boolean {
     if (!Number.isFinite(note.lane) || !this.validNote(note)) return false;
-    const parts = selectNoteSkinParts({ kind: note.kind, lane: note.lane, width: note.laneSpan }, this.tiltThresholds);
+    const parts = selectNoteSkinParts(
+      { kind: note.kind, lane: note.lane, width: note.laneSpan },
+      this.tiltThresholds,
+      this.noteSkin,
+    );
     return this.drawNoteParts(context, note, parts);
   }
 
   /** Draws a flat authoring note without applying live-camera endpoint tilt. */
   drawFlatNote(context: CanvasRenderingContext2D, note: ChartCanvasFlatNote): boolean {
     if (!this.validNote(note)) return false;
-    return this.drawNoteParts(context, note, selectFlatNoteSkinParts(note.kind));
+    return this.drawNoteParts(context, note, selectFlatNoteSkinParts(note.kind, this.noteSkin));
   }
 
   /** Measures only the neutral L / 0 / R body in canvas CSS pixels. */
   flatNoteBodyHeight(kind: RenderNoteKind, stageWidth: number, scale = 1): number | undefined {
     if (!Number.isFinite(stageWidth) || stageWidth <= 0 || !Number.isFinite(scale)) return undefined;
-    const parts = selectFlatNoteSkinParts(kind);
+    const parts = selectFlatNoteSkinParts(kind, this.noteSkin);
     const left = this.cachedSprite(parts.left.spriteName);
     const main = this.cachedSprite(parts.mainSpriteName);
     const right = this.cachedSprite(parts.right.spriteName);
-    if (!left || !main || !right) return undefined;
+    if (!main || (parts.left.spriteName && !left) || (parts.right.spriteName && !right)) return undefined;
     return (
       noteSkinBodyHeight(
         {
-          leftBounds: left.bounds,
+          leftBounds: left?.bounds ?? EMPTY_SPRITE_BOUNDS,
           mainBounds: main.bounds,
-          rightBounds: right.bounds,
+          rightBounds: right?.bounds ?? EMPTY_SPRITE_BOUNDS,
         },
         Math.max(0.001, scale),
       ) *
@@ -276,25 +283,25 @@ export class ChartCanvasSkin {
     const left = this.cachedSprite(parts.left.spriteName);
     const main = this.cachedSprite(parts.mainSpriteName);
     const right = this.cachedSprite(parts.right.spriteName);
-    if (!left || !main || !right) return false;
+    if (!main || (parts.left.spriteName && !left) || (parts.right.spriteName && !right)) return false;
 
     const bodyLayout = layoutNoteSkinBody({
       parts,
-      leftBounds: left.bounds,
-      rightBounds: right.bounds,
+      leftBounds: left?.bounds ?? EMPTY_SPRITE_BOUNDS,
+      rightBounds: right?.bounds ?? EMPTY_SPRITE_BOUNDS,
       mainBounds: main.bounds,
       mainRegion: main.region,
       viewWidth: note.width / nativeToCss,
       scale,
     });
     const mainSlices = noteSkinTightHorizontalSlices(main.region);
-    drawTightSpriteQuad(context, left, bodyLayout.left, note.centerX, note.centerY, nativeToCss);
+    if (left) drawTightSpriteQuad(context, left, bodyLayout.left, note.centerX, note.centerY, nativeToCss);
     drawTightSpriteQuad(context, main, bodyLayout.mainLeft, note.centerX, note.centerY, nativeToCss, mainSlices[0]);
     drawTightSpriteQuad(context, main, bodyLayout.mainMiddle, note.centerX, note.centerY, nativeToCss, mainSlices[1]);
     drawTightSpriteQuad(context, main, bodyLayout.mainRight, note.centerX, note.centerY, nativeToCss, mainSlices[2]);
-    drawTightSpriteQuad(context, right, bodyLayout.right, note.centerX, note.centerY, nativeToCss);
+    if (right) drawTightSpriteQuad(context, right, bodyLayout.right, note.centerX, note.centerY, nativeToCss);
 
-    const decorationName = noteSkinDecorationName(note.kind);
+    const decorationName = noteSkinDecorationName(note.kind, this.noteSkin);
     const decoration = decorationName ? this.cachedSprite(decorationName) : undefined;
     if (decoration) {
       drawTightSpriteOverlay(
@@ -316,7 +323,7 @@ export class ChartCanvasSkin {
       drawTightSpriteOverlay(
         context,
         arrow,
-        layoutNoteSkinArrow(arrowName, noteSkinEffectiveDirection(note), arrow.bounds, scale),
+        layoutNoteSkinArrow(arrowName, noteSkinEffectiveDirection(note), arrow.bounds, scale, this.noteSkin),
         note.centerX,
         note.centerY,
         nativeToCss,
@@ -371,6 +378,34 @@ export class ChartCanvasSkin {
       orientedContext.rotate(Math.PI / 2);
     }
     orientedContext.drawImage(crop, 0, 0);
+
+    // A tightly packed rectangle can contain neighboring Sprite corners.
+    // Mask once in the cached, unpacked image using the authored triangles.
+    if (region.mesh) {
+      const tightWidth = rotated ? region.rect.height : region.rect.width;
+      const tightHeight = rotated ? region.rect.width : region.rect.height;
+      orientedContext.setTransform(1, 0, 0, 1, 0, 0);
+      orientedContext.globalCompositeOperation = "destination-in";
+      orientedContext.beginPath();
+      for (let index = 0; index < region.mesh.indices.length; index += 3) {
+        for (let corner = 0; corner < 3; corner++) {
+          const position = region.mesh.positions[region.mesh.indices[index + corner]!]!;
+          const x =
+            ((position[0] * region.pixelsToUnits + region.pivot.x * region.sourceSize.width - region.offset.x) /
+              tightWidth) *
+            oriented.width;
+          const y =
+            (1 -
+              (position[1] * region.pixelsToUnits + region.pivot.y * region.sourceSize.height - region.offset.y) /
+                tightHeight) *
+            oriented.height;
+          if (corner === 0) orientedContext.moveTo(x, y);
+          else orientedContext.lineTo(x, y);
+        }
+        orientedContext.closePath();
+      }
+      orientedContext.fill();
+    }
 
     const result = { canvas: oriented, region, bounds: noteSkinSpriteBounds(region) };
     this.spriteCache.set(name, result);
