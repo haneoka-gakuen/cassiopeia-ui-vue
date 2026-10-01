@@ -151,6 +151,8 @@ let failedBackgroundVideoUrl = "";
 let lastEmittedMediaPlaying = false;
 const inputMusicTime = new MusicTimeAnchor();
 const activePointerIds = new Set<number>();
+const pointerInputVersions = new Map<number, number>();
+let nextPointerInputVersion = 0;
 const inputFeedbackClaimedPointerIds = new Set<number>();
 const lastLaneInputEffect = new Map<number, number>();
 const LANE_INPUT_EFFECT_WIDTH = 2;
@@ -326,6 +328,7 @@ function reportBackgroundVideoError(revision: number, url: string): void {
 
 function attachSession(): void {
   activePointerIds.clear();
+  pointerInputVersions.clear();
   inputFeedbackClaimedPointerIds.clear();
   lastLaneInputEffect.clear();
   timelineFinished = false;
@@ -337,10 +340,12 @@ function attachSession(): void {
       mode: props.mode,
       judgementOffsetMs: props.settings.judgementOffsetMs ?? 0,
     });
+  bindInputCancellation(session);
   hapticFeedback.stop();
   hapticFeedback = new HapticFeedback(props.haptics);
   frameBuilder = pluginRuntime().require(OUR_NOTES_RULES).createFrameBuilder(props.chart, {
     particleSeed: props.effectSeed,
+    noteEffectSkin: props.assets.source.noteEffectSkin,
   });
   session.on("judgement", (event) => {
     if (incrementsCombo(event.judgement)) {
@@ -364,6 +369,34 @@ function attachSession(): void {
   session.on("fever", (event) => emit("fever", event));
   session.on("callChange", (event) => emit("callchange", event));
   attachTitleIntroduction();
+}
+
+function bindInputCancellation(target: CassiopeiaSessionPort): void {
+  // Judgement handlers can cancel/reset the owned session directly. Update
+  // the local input generation before their older input call returns.
+  const cancel = target.cancel.bind(target);
+  target.cancel = (pointerId) => {
+    if (!destroyed && session === target && pointerId !== undefined) {
+      activePointerIds.delete(pointerId);
+      pointerInputVersions.delete(pointerId);
+      inputFeedbackClaimedPointerIds.delete(pointerId);
+      lastLaneInputEffect.delete(pointerId);
+    }
+    cancel(pointerId);
+    if (!destroyed && session === target) updateHeldSoundAfterInput();
+  };
+  const reset = target.reset.bind(target);
+  target.reset = (timeMs) => {
+    if (!destroyed && session === target) {
+      activePointerIds.clear();
+      pointerInputVersions.clear();
+      inputFeedbackClaimedPointerIds.clear();
+      lastLaneInputEffect.clear();
+    }
+    const snapshot = reset(timeMs);
+    if (!destroyed && session === target) updateHeldSoundAfterInput();
+    return snapshot;
+  };
 }
 
 function attachTitleIntroduction(): void {
@@ -486,7 +519,13 @@ function attachInput(): void {
   if (!root.value || !renderer) return;
   input?.destroy();
   activePointerIds.clear();
+  pointerInputVersions.clear();
   const canJudge = () => props.mode === "play" && gameplayIsPlaying();
+  const currentInput = (target: CassiopeiaSessionPort | undefined, pointerId: number, version: number) =>
+    canJudge() &&
+    session === target &&
+    activePointerIds.has(pointerId) &&
+    pointerInputVersions.get(pointerId) === version;
   input = pluginRuntime()
     .require(WEB_HOST)
     .createInput(
@@ -494,15 +533,25 @@ function attachInput(): void {
       {
         tap: (point) => {
           if (!canJudge()) return;
+          const target = session;
+          const version = ++nextPointerInputVersion;
           activePointerIds.add(point.pointerId);
-          const judgement = session?.tap(point.lane, point.timeMs, point.pointerId);
+          pointerInputVersions.set(point.pointerId, version);
+          inputFeedbackClaimedPointerIds.delete(point.pointerId);
+          lastLaneInputEffect.delete(point.pointerId);
+          const judgement = target?.tap(point.lane, point.timeMs, point.pointerId);
+          if (!currentInput(target, point.pointerId, version)) return;
           if (judgement) inputFeedbackClaimedPointerIds.add(point.pointerId);
           else if (!session?.hasInputCandidate(point.lane, point.timeMs, point.pointerId))
             addEmptyLaneInputEffect(point, "tap");
         },
         move: (point) => {
           if (!canJudge()) return;
-          const judgement = session?.trace(point.lane, point.timeMs, point.pointerId);
+          const target = session;
+          const version = pointerInputVersions.get(point.pointerId);
+          if (version === undefined) return;
+          const judgement = target?.trace(point.lane, point.timeMs, point.pointerId);
+          if (!currentInput(target, point.pointerId, version)) return;
           if (judgement) inputFeedbackClaimedPointerIds.add(point.pointerId);
           else if (
             !inputFeedbackClaimedPointerIds.has(point.pointerId) &&
@@ -511,27 +560,45 @@ function attachInput(): void {
             addEmptyLaneInputEffect(point, "move");
         },
         release: (point) => {
+          const target = session;
+          const version = pointerInputVersions.get(point.pointerId);
+          if (version === undefined) return;
           activePointerIds.delete(point.pointerId);
-          if (canJudge()) session?.release(point.lane, point.timeMs, point.pointerId);
-          else session?.cancel(point.pointerId);
-          inputFeedbackClaimedPointerIds.delete(point.pointerId);
-          lastLaneInputEffect.delete(point.pointerId);
+          if (canJudge()) target?.release(point.lane, point.timeMs, point.pointerId);
+          else target?.cancel(point.pointerId);
+          if (session === target && pointerInputVersions.get(point.pointerId) === version) {
+            pointerInputVersions.delete(point.pointerId);
+            inputFeedbackClaimedPointerIds.delete(point.pointerId);
+            lastLaneInputEffect.delete(point.pointerId);
+          }
+          updateHeldSoundAfterInput();
         },
         flick: (point) => {
           if (!canJudge()) return;
-          const judgement = session?.flick(
+          const target = session;
+          const version = pointerInputVersions.get(point.pointerId);
+          if (version === undefined) return;
+          const judgement = target?.flick(
             point.previousLane,
             { dx: point.dx, dy: point.dy },
             point.timeMs,
             point.pointerId,
           );
+          if (!currentInput(target, point.pointerId, version)) return;
           if (judgement) inputFeedbackClaimedPointerIds.add(point.pointerId);
         },
         cancel: (pointerId) => {
+          const target = session;
+          const version = pointerInputVersions.get(pointerId);
+          if (version === undefined) return;
           activePointerIds.delete(pointerId);
-          inputFeedbackClaimedPointerIds.delete(pointerId);
-          lastLaneInputEffect.delete(pointerId);
-          session?.cancel(pointerId);
+          target?.cancel(pointerId);
+          if (session === target && pointerInputVersions.get(pointerId) === version) {
+            pointerInputVersions.delete(pointerId);
+            inputFeedbackClaimedPointerIds.delete(pointerId);
+            lastLaneInputEffect.delete(pointerId);
+          }
+          updateHeldSoundAfterInput();
         },
       },
       {
@@ -546,6 +613,15 @@ function attachInput(): void {
         flickDistanceCm: 0.2,
       },
     );
+}
+
+function updateHeldSoundAfterInput(): void {
+  noteSounds?.setLongLineActive(
+    props.noteSoundEnabled && gameplayIsPlaying() && (session?.snapshot().activeLongLine ?? false),
+    props.noteSoundVolume,
+  );
+  dirty = true;
+  requestFrame();
 }
 
 function renderFrame(): void {
@@ -567,12 +643,6 @@ function renderFrame(): void {
   if (!dirty && timeMs === lastRenderedTimeMs && !introductionLifecycle.running) return;
   const frameStarted = perfProbe ? realtimeMs : 0;
   const sessionStarted = frameStarted;
-  if (props.mode === "play" && gameplayPlaying && activePointerIds.size > 0) {
-    for (const point of input?.activePoints ?? []) {
-      if (session.trace(point.lane, simulationTimeMs, point.pointerId))
-        inputFeedbackClaimedPointerIds.add(point.pointerId);
-    }
-  }
   const snapshot = timelineFinished && !gameplayPlaying ? session.snapshot() : session.updateReusable(simulationTimeMs);
   const sessionFinished = perfProbe ? performance.now() : 0;
   if (props.noteSoundEnabled) {
@@ -665,6 +735,7 @@ function resetTimeline(timeMs: number): void {
   resetFinishDirection();
   suppressEffects = true;
   activePointerIds.clear();
+  pointerInputVersions.clear();
   inputFeedbackClaimedPointerIds.clear();
   lastLaneInputEffect.clear();
   noteSounds?.clearQueue();
@@ -690,6 +761,7 @@ function finishTimeline(timeMs = chartTimeMs()): void {
   if (!session || timelineFinished) return;
   for (const pointerId of activePointerIds) session.cancel(pointerId);
   activePointerIds.clear();
+  pointerInputVersions.clear();
   inputFeedbackClaimedPointerIds.clear();
   lastLaneInputEffect.clear();
   noteSounds?.stopLongLine();
@@ -867,6 +939,7 @@ function pause(): void {
     for (const point of input?.activePoints ?? []) session?.cancel(point.pointerId);
   }
   activePointerIds.clear();
+  pointerInputVersions.clear();
   inputFeedbackClaimedPointerIds.clear();
   lastLaneInputEffect.clear();
   noteSounds?.clearQueue();
@@ -937,9 +1010,14 @@ function attachInternalAudio(): void {
     loop: props.loop,
   });
   clock = candidate;
-  noteSounds = pluginRuntime().require(WEB_HOST).createNoteSounds(props.assets.noteSounds);
-  void noteSounds.load();
+  const soundPlayer = pluginRuntime()
+    .require(WEB_HOST)
+    .createNoteSounds(props.assets.noteSounds, { mediaElement: candidate.audio });
+  noteSounds = soundPlayer;
   const active = () => !destroyed && clock === candidate;
+  void soundPlayer.load().catch((reason) => {
+    if (active() && noteSounds === soundPlayer) emit("error", errorOf(reason));
+  });
   candidate.audio.addEventListener("play", () => {
     if (active()) requestFrame();
   });
@@ -953,6 +1031,8 @@ function attachInternalAudio(): void {
   });
   const onBuffering = () => {
     if (active() && suppressInternalMediaEvents === 0 && !titleIntroductionInFlight()) {
+      noteSounds?.clearQueue();
+      noteSounds?.stopLongLine();
       emitMediaPlaying(false);
       emit("playing", false);
     }
@@ -1272,6 +1352,7 @@ onBeforeUnmount(() => {
   titleIntroductionPlaybackGeneration = undefined;
   titleIntroductionUnlock = undefined;
   activePointerIds.clear();
+  pointerInputVersions.clear();
   inputFeedbackClaimedPointerIds.clear();
   lastLaneInputEffect.clear();
   cancelAnimationFrame(animationFrame);
