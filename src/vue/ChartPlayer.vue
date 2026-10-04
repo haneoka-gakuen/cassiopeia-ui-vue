@@ -1339,7 +1339,14 @@ watch(
     requestFrame();
   },
 );
-defineExpose<ChartPlayerExpose>({ play, pause, seek, restart, resize });
+defineExpose<ChartPlayerExpose>({
+  play,
+  pause,
+  seek,
+  restart,
+  resize,
+  getPresentation: () => (ready.value && !destroyed ? renderer : undefined),
+});
 
 onMounted(() => nextTick(initialize));
 onBeforeUnmount(() => {

@@ -4,7 +4,7 @@ import type {
   ChartSkillEvent,
   JudgementEvent,
 } from "@haneoka/cassiopeia";
-import type { ChartPerfSummary } from "@haneoka/cassiopeia-renderer-three";
+import type { ChartPerfSummary, NativeChartPresentation } from "@haneoka/cassiopeia-renderer-three";
 
 export interface ChartPlayerExpose {
   /**
@@ -30,6 +30,8 @@ export interface ChartPlayerExpose {
    */
   restart(): void;
   resize(): void;
+  /** Native CSS-coordinate projection and sprite-mesh picking on this player; absent before ready or after disposal. */
+  getPresentation(): NativeChartPresentation | undefined;
 }
 
 export interface ChartPlayerEvents {
