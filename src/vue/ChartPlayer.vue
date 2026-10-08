@@ -30,7 +30,12 @@ import type { OurNotesRenderer } from "@haneoka/cassiopeia-renderer-three";
 import { selectBackgroundMediaSource } from "@haneoka/cassiopeia-renderer-three";
 import { ChartPerfProbe } from "@haneoka/cassiopeia-renderer-three";
 import { nativeRenderPixelRatio } from "@haneoka/cassiopeia-renderer-three";
-import type { RenderFrame, RenderTitleIntroductionTheme } from "@haneoka/cassiopeia-plugin-our-notes";
+import type {
+  RenderFrame,
+  RenderTitleIntroductionTheme,
+  NativeChartVisualProfiles,
+} from "@haneoka/cassiopeia-plugin-our-notes";
+import { NativeChartVisualProfilesError } from "@haneoka/cassiopeia-plugin-our-notes";
 import { normalizeExternalTimeMs, shouldResetExternalTimeline } from "./externalClock";
 import { PlayerFinishDirectionLifecycle, type PlayerFinishDirectionTransition } from "./PlayerFinishDirectionLifecycle";
 import { PlayerIntroductionLifecycle, type PlayerIntroductionTransition } from "./PlayerIntroductionLifecycle";
@@ -41,6 +46,8 @@ import type { ChartPlayerEvents, ChartPlayerExpose } from "./types";
 const props = withDefaults(
   defineProps<{
     chart: ChartDocument;
+    /** Native IDs from this chart epoch; replace jointly with chart, never editor-private metadata. */
+    visualProfiles?: NativeChartVisualProfiles;
     assets: OurNotesAssetManifest;
     audioUrl?: string;
     /**
@@ -117,6 +124,7 @@ let hapticFeedback = new HapticFeedback();
 let ownedPluginRuntime: CassiopeiaRuntime | undefined;
 const pluginRuntime = () => props.runtime ?? (ownedPluginRuntime ??= createOurNotesWebRuntime());
 let frameBuilder: RenderFrameBuilder | undefined;
+let attachedChart: ChartDocument | undefined;
 let noteSounds: NoteSoundPlayer | undefined;
 let titleIntroduction: TitleIntroductionPresentation | undefined;
 let titleIntroductionSnapshot: TitleIntroductionSnapshot | undefined;
@@ -327,6 +335,16 @@ function reportBackgroundVideoError(revision: number, url: string): void {
 }
 
 function attachSession(): void {
+  const chart = props.chart;
+  // Reject invalid profiles before replacing the current valid session/builder.
+  const profiledBuilder =
+    props.visualProfiles === undefined
+      ? undefined
+      : pluginRuntime().require(OUR_NOTES_RULES).createFrameBuilder(chart, {
+          particleSeed: props.effectSeed,
+          noteEffectSkin: props.assets.source.noteEffectSkin,
+          visualProfiles: props.visualProfiles,
+        });
   activePointerIds.clear();
   pointerInputVersions.clear();
   inputFeedbackClaimedPointerIds.clear();
@@ -336,17 +354,19 @@ function attachSession(): void {
   frameAddedCombo = 0;
   session = pluginRuntime()
     .require(CASSIOPEIA_SESSION)
-    .create(props.chart, {
+    .create(chart, {
       mode: props.mode,
       judgementOffsetMs: props.settings.judgementOffsetMs ?? 0,
     });
   bindInputCancellation(session);
   hapticFeedback.stop();
   hapticFeedback = new HapticFeedback(props.haptics);
-  frameBuilder = pluginRuntime().require(OUR_NOTES_RULES).createFrameBuilder(props.chart, {
-    particleSeed: props.effectSeed,
-    noteEffectSkin: props.assets.source.noteEffectSkin,
-  });
+  frameBuilder =
+    profiledBuilder ??
+    pluginRuntime().require(OUR_NOTES_RULES).createFrameBuilder(chart, {
+      particleSeed: props.effectSeed,
+      noteEffectSkin: props.assets.source.noteEffectSkin,
+    });
   session.on("judgement", (event) => {
     if (incrementsCombo(event.judgement)) {
       frameComboUpdated = true;
@@ -369,6 +389,7 @@ function attachSession(): void {
   session.on("fever", (event) => emit("fever", event));
   session.on("callChange", (event) => emit("callchange", event));
   attachTitleIntroduction();
+  attachedChart = chart;
 }
 
 function bindInputCancellation(target: CassiopeiaSessionPort): void {
@@ -1158,21 +1179,36 @@ watch(
     } else seek(0, false);
   },
 );
-watch(
-  () => props.chart,
-  () => {
-    pause();
-    introductionLifecycle.reset();
-    introductionHandoff.cancel();
+watch([() => props.chart, () => props.visualProfiles], ([chart]) => {
+  if (chart === attachedChart && frameBuilder) {
+    try {
+      frameBuilder.setVisualProfiles(props.visualProfiles);
+    } catch (reason) {
+      reportError(reason);
+      return;
+    }
+    if (failed.value instanceof NativeChartVisualProfilesError) failed.value = null;
+    dirty = true;
+    requestFrame();
+    return;
+  }
+  pause();
+  introductionLifecycle.reset();
+  introductionHandoff.cancel();
+  try {
     attachSession();
-    if (ready.value) beginPerformanceEpoch();
-    if (externalClockControlled.value) {
-      skipTitleIntroduction();
-      resetTimeline(chartTimeMs());
-    } else seek(0, false);
-    emit("duration", presentationDurationMs() / 1000);
-  },
-);
+  } catch (reason) {
+    reportError(reason);
+    return;
+  }
+  if (failed.value instanceof NativeChartVisualProfilesError) failed.value = null;
+  if (ready.value) beginPerformanceEpoch();
+  if (externalClockControlled.value) {
+    skipTitleIntroduction();
+    resetTimeline(chartTimeMs());
+  } else seek(0, false);
+  emit("duration", presentationDurationMs() / 1000);
+});
 watch(
   () => props.effectSeed,
   () => {
