@@ -59,5 +59,16 @@
     "node": ">=24"
   },
   "packageManager": "pnpm@11.14.0",
-  "description": "Vue player and overview composed from Cassiopeia plugins"
+  "description": "Vue player and overview composed from Cassiopeia plugins",
+  "keywords": [
+    "cassiopeia",
+    "rhythm-game",
+    "vue",
+    "chart-player",
+    "chart-viewer"
+  ],
+  "homepage": "https://github.com/haneoka-gakuen/cassiopeia-ui-vue#readme",
+  "bugs": {
+    "url": "https://github.com/haneoka-gakuen/cassiopeia-ui-vue/issues"
+  }
 }
