@@ -53,7 +53,11 @@
     "@vitejs/plugin-vue": "^6.0.7",
     "@vue/compiler-sfc": "^3.5.39",
     "vue-tsc": "^3.3.6",
-    "prettier": "3.7.4"
+    "prettier": "3.7.4",
+    "@haneoka/cassiopeia": "workspace:^",
+    "@haneoka/cassiopeia-plugin-our-notes": "workspace:^",
+    "@haneoka/cassiopeia-renderer-three": "workspace:^",
+    "@haneoka/cassiopeia-host-web": "workspace:^"
   },
   "engines": {
     "node": ">=24"

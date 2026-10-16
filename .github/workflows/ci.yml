@@ -34,24 +34,10 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-      - run: pnpm --dir .deps/cassiopeia install --frozen-lockfile
-      - run: pnpm --dir .deps/cassiopeia build:web
-      - run: |
-          cd .deps/our-notes
-          pnpm install --frozen-lockfile
-          pnpm link ../cassiopeia
-          pnpm build
-      - run: |
-          cd .deps/renderer-three
-          pnpm install --frozen-lockfile
-          pnpm link ../cassiopeia ../our-notes
-          pnpm build
-      - run: |
-          cd .deps/host-web
-          pnpm install --frozen-lockfile
-          pnpm link ../cassiopeia ../our-notes
-          pnpm build
       - run: pnpm install --frozen-lockfile
-      - run: pnpm link .deps/cassiopeia .deps/our-notes .deps/renderer-three .deps/host-web
+      - run: pnpm --filter @haneoka/cassiopeia build:web
+      - run: pnpm --filter @haneoka/cassiopeia-plugin-our-notes build
+      - run: pnpm --filter @haneoka/cassiopeia-renderer-three build
+      - run: pnpm --filter @haneoka/cassiopeia-host-web build
       - run: pnpm check
       - run: npm pack --dry-run --ignore-scripts

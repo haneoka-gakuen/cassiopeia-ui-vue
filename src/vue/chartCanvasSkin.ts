@@ -1,7 +1,9 @@
 import { CanvasSpriteAtlas } from "@haneoka/cassiopeia-renderer-three";
 import {
   OUR_NOTES_LIVE_GEOMETRY,
+  OUR_NOTES_SLIDE_LINE_STYLES,
   type OurNotesAssetManifest,
+  type OurNotesSlideLineStyle,
   type SpriteAtlasManifest,
 } from "@haneoka/cassiopeia-plugin-our-notes";
 import type { SpriteRegion } from "@haneoka/cassiopeia-renderer-three";
@@ -75,7 +77,7 @@ export interface ChartCanvasLanePlane {
 export type ChartCanvasRibbonKind = "slide" | "guide";
 
 export interface ChartCanvasRibbonStyle {
-  fillStyle: CanvasGradient;
+  fillStyle: CanvasGradient | string;
   strokeStyle: string;
   lineWidth: number;
   alphaMultiplier: number;
@@ -195,6 +197,7 @@ export class ChartCanvasSkin {
     private readonly atlas: CanvasSpriteAtlas,
     private readonly tiltThresholds: OurNotesAssetManifest["tiltThresholds"],
     private readonly noteSkin: OurNotesAssetManifest["source"]["noteSkin"],
+    readonly slideLineStyle: OurNotesSlideLineStyle,
   ) {
     this.missingSprites = atlas.missingSprites;
   }
@@ -204,6 +207,7 @@ export class ChartCanvasSkin {
       await CanvasSpriteAtlas.load(canvasAtlasManifest(assets)),
       assets.tiltThresholds,
       assets.source.noteSkin,
+      assets.slideLineStyle,
     );
   }
 
@@ -464,31 +468,34 @@ export function drawChartCanvasLanePlane(context: CanvasRenderingContext2D, opti
   context.restore();
 }
 
-/** Creates the decoded skin001 slide-line palette for one canvas viewport. */
+/** Creates the selected native palette over the complete authored line. */
 export function createChartCanvasRibbonStyle(
   context: CanvasRenderingContext2D,
   kind: ChartCanvasRibbonKind,
   height: number,
   laneWidth: number,
   top = 0,
+  source: OurNotesSlideLineStyle = OUR_NOTES_SLIDE_LINE_STYLES.skin001,
 ): ChartCanvasRibbonStyle {
-  const fillStyle = context.createLinearGradient(0, top + height, 0, top);
+  const rgba = (r: number, g: number, b: number, a: number) => `rgba(${r * 255}, ${g * 255}, ${b * 255}, ${a})`;
   if (kind === "guide") {
-    fillStyle.addColorStop(0, "rgba(120, 98, 255, 0.34)");
-    fillStyle.addColorStop(1, "rgba(178, 137, 255, 0.42)");
     return {
-      fillStyle,
-      strokeStyle: "rgba(171, 142, 255, 0.72)",
-      lineWidth: laneWidth / 10,
-      alphaMultiplier: 0.7,
+      fillStyle: rgba(...source.guide),
+      strokeStyle: rgba(...source.guide),
+      lineWidth: 0,
+      alphaMultiplier: 1,
     };
   }
-  fillStyle.addColorStop(0, "rgba(122, 73, 255, 0.86)");
-  fillStyle.addColorStop(0.55, "rgba(68, 83, 217, 0.86)");
-  fillStyle.addColorStop(1, "rgba(93, 132, 250, 0.71)");
+  const fillStyle = context.createLinearGradient(0, top + Math.max(height, 0.001), 0, top);
+  const [start, startAlpha, end, endAlpha] = source.normal.alpha;
+  for (const [time, r, g, b] of source.normal.colors) {
+    const progress = Math.max(0, Math.min(1, (time - start) / (end - start)));
+    fillStyle.addColorStop(time, rgba(r, g, b, startAlpha + (endAlpha - startAlpha) * progress));
+  }
+  const [r, g, b, a] = source.glow.color;
   return {
     fillStyle,
-    strokeStyle: "rgba(151, 122, 255, 0.82)",
+    strokeStyle: rgba(r, g, b, a * source.glow.intensity * source.glow.enabledScale),
     lineWidth: laneWidth / 10,
     alphaMultiplier: 1,
   };

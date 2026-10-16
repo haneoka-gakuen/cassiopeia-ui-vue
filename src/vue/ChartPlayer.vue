@@ -3,6 +3,19 @@ import { CASSIOPEIA_SESSION, type CassiopeiaRuntime, type CassiopeiaSessionPort 
 import { OUR_NOTES_RULES } from "@haneoka/cassiopeia-plugin-our-notes";
 import { THREE_RENDERER } from "@haneoka/cassiopeia-renderer-three";
 import { WEB_HOST } from "@haneoka/cassiopeia-host-web";
+import {
+  PreparedResource,
+  browserPresentationResources,
+  type PresentationResourcePort,
+} from "@haneoka/cassiopeia-host-web";
+import {
+  OurNotesGekisouPlayback,
+  OUR_NOTES_GEKISOU_STAGE_PROFILE_URL,
+  ourNotesPresentationResourceUrl,
+  ourNotesGekisouTextures,
+  type OurNotesGekisouPlaybackConfiguration,
+  type OurNotesGekisouEffectProfile,
+} from "@haneoka/cassiopeia-plugin-our-notes";
 import { createOurNotesWebRuntime } from "../runtime";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
@@ -19,7 +32,7 @@ import type { ChartMode } from "@haneoka/cassiopeia";
 import { LANE_COUNT } from "@haneoka/cassiopeia";
 import { HapticFeedback, type HapticPort } from "@haneoka/cassiopeia-plugin-our-notes";
 import { breaksCombo, incrementsCombo } from "@haneoka/cassiopeia";
-import type { ChartDocument, LaneInputEffectEvent } from "@haneoka/cassiopeia";
+import type { ChartDocument, LaneInputEffectEvent, WatchVisualReplayContract } from "@haneoka/cassiopeia";
 import type { OurNotesInput, InputPoint } from "@haneoka/cassiopeia-host-web";
 import {
   TitleIntroductionPresentation,
@@ -48,6 +61,9 @@ const props = withDefaults(
     chart: ChartDocument;
     /** Native IDs from this chart epoch; replace jointly with chart, never editor-private metadata. */
     visualProfiles?: NativeChartVisualProfiles;
+    gekisou?: OurNotesGekisouPlaybackConfiguration;
+    presentationResources?: PresentationResourcePort;
+    watchVisualReplay?: WatchVisualReplayContract;
     assets: OurNotesAssetManifest;
     audioUrl?: string;
     /**
@@ -116,14 +132,23 @@ const canvas = ref<HTMLCanvasElement | null>(null);
 const hudCanvas = ref<HTMLCanvasElement | null>(null);
 const backgroundVideo = ref<HTMLVideoElement | null>(null);
 const ready = ref(false);
+const presentationPending = ref(false);
+let presentationUpdate: Promise<void> = Promise.resolve();
+let presentationError: Error | undefined;
 const failed = ref<Error | null>(null);
 let renderer: OurNotesRenderer | undefined;
 let clock: MediaClock | undefined;
 let session: CassiopeiaSessionPort | undefined;
+let previousAttachedSession: CassiopeiaSessionPort | undefined;
 let hapticFeedback = new HapticFeedback();
 let ownedPluginRuntime: CassiopeiaRuntime | undefined;
 const pluginRuntime = () => props.runtime ?? (ownedPluginRuntime ??= createOurNotesWebRuntime());
 let frameBuilder: RenderFrameBuilder | undefined;
+let gekisouPlayback: OurNotesGekisouPlayback | undefined;
+let gekisouResources: PreparedResource<OurNotesGekisouEffectProfile> | undefined;
+const playerLifetime = new AbortController();
+const gekisouSeed = new Uint32Array(1);
+let gekisouRevision = 0;
 let attachedChart: ChartDocument | undefined;
 let noteSounds: NoteSoundPlayer | undefined;
 let titleIntroduction: TitleIntroductionPresentation | undefined;
@@ -334,17 +359,23 @@ function reportBackgroundVideoError(revision: number, url: string): void {
   });
 }
 
-function attachSession(): void {
+function attachSession(prepared?: OurNotesGekisouPlayback): void {
   const chart = props.chart;
+  const presentation =
+    prepared ?? new OurNotesGekisouPlayback(chart, props.gekisou, () => crypto.getRandomValues(gekisouSeed)[0]!);
+  if (gekisouSource) presentation.setSource(gekisouSource);
   // Reject invalid profiles before replacing the current valid session/builder.
   const profiledBuilder =
     props.visualProfiles === undefined
       ? undefined
-      : pluginRuntime().require(OUR_NOTES_RULES).createFrameBuilder(chart, {
-          particleSeed: props.effectSeed,
-          noteEffectSkin: props.assets.source.noteEffectSkin,
-          visualProfiles: props.visualProfiles,
-        });
+      : pluginRuntime()
+          .require(OUR_NOTES_RULES)
+          .createFrameBuilder(chart, {
+            particleSeed: props.effectSeed,
+            noteEffectSkin: props.assets.source.noteEffectSkin,
+            visualProfiles: props.visualProfiles,
+            ...presentation.frameBuilderOptions(),
+          });
   activePointerIds.clear();
   pointerInputVersions.clear();
   inputFeedbackClaimedPointerIds.clear();
@@ -354,20 +385,33 @@ function attachSession(): void {
   frameAddedCombo = 0;
   session = pluginRuntime()
     .require(CASSIOPEIA_SESSION)
-    .create(chart, {
-      mode: props.mode,
-      judgementOffsetMs: props.settings.judgementOffsetMs ?? 0,
-    });
+    .create(
+      chart,
+      presentation.sessionOptions({
+        mode: props.mode,
+        judgementOffsetMs: props.settings.judgementOffsetMs ?? 0,
+      }),
+    );
   bindInputCancellation(session);
   hapticFeedback.stop();
   hapticFeedback = new HapticFeedback(props.haptics);
   frameBuilder =
     profiledBuilder ??
-    pluginRuntime().require(OUR_NOTES_RULES).createFrameBuilder(chart, {
-      particleSeed: props.effectSeed,
-      noteEffectSkin: props.assets.source.noteEffectSkin,
-    });
+    pluginRuntime()
+      .require(OUR_NOTES_RULES)
+      .createFrameBuilder(chart, {
+        particleSeed: props.effectSeed,
+        noteEffectSkin: props.assets.source.noteEffectSkin,
+        ...presentation.frameBuilderOptions(),
+      });
+  const previousSession = previousAttachedSession;
+  gekisouPlayback = presentation;
+  previousAttachedSession = session;
+  previousSession?.dispose?.();
+  const targetSession = session,
+    targetBuilder = frameBuilder;
   session.on("judgement", (event) => {
+    if (session !== targetSession || frameBuilder !== targetBuilder || destroyed) return;
     if (incrementsCombo(event.judgement)) {
       frameComboUpdated = true;
       frameAddedCombo += 1;
@@ -377,7 +421,7 @@ function attachSession(): void {
       frameAddedCombo = 0;
     }
     if (!suppressEffects) {
-      frameBuilder?.addJudgement(event, chartTimeMs());
+      frameBuilder?.addJudgement(event, chartTimeMs(), session?.snapshot().feverSection?.index);
       if (props.noteSoundEnabled) noteSounds?.queue(event);
       if (props.mode === "play") hapticFeedback.judgement(event);
     }
@@ -407,14 +451,14 @@ function bindInputCancellation(target: CassiopeiaSessionPort): void {
     if (!destroyed && session === target) updateHeldSoundAfterInput();
   };
   const reset = target.reset.bind(target);
-  target.reset = (timeMs) => {
+  target.reset = (timeMs, replay) => {
     if (!destroyed && session === target) {
       activePointerIds.clear();
       pointerInputVersions.clear();
       inputFeedbackClaimedPointerIds.clear();
       lastLaneInputEffect.clear();
     }
-    const snapshot = reset(timeMs);
+    const snapshot = reset(timeMs, replay);
     if (!destroyed && session === target) updateHeldSoundAfterInput();
     return snapshot;
   };
@@ -645,6 +689,54 @@ function updateHeldSoundAfterInput(): void {
   requestFrame();
 }
 
+let gekisouSource: OurNotesGekisouEffectProfile | undefined;
+
+function configureGekisouResources(target: OurNotesRenderer): void {
+  gekisouResources?.dispose();
+  gekisouSource = undefined;
+  const resolver = props.assets.presentationAssets;
+  const port = props.presentationResources ?? browserPresentationResources;
+  gekisouResources = new PreparedResource(async (signal) => {
+    if (!resolver) throw new Error("gekisou-presentation-assets-required");
+    const source = (await port.readJson(OUR_NOTES_GEKISOU_STAGE_PROFILE_URL, signal)) as OurNotesGekisouEffectProfile;
+    signal.throwIfAborted();
+    const textures = ourNotesGekisouTextures(source, (path) => ourNotesPresentationResourceUrl(resolver, path));
+    const resolved = Object.fromEntries(
+      await Promise.all(
+        Object.entries(textures).map(
+          async ([key, value]) => [key, { ...value, url: await port.resolveUrl(value.url, signal) }] as const,
+        ),
+      ),
+    );
+    signal.throwIfAborted();
+    await target.loadOverlayTextures(resolved);
+    signal.throwIfAborted();
+    return source;
+  });
+}
+
+async function prepareGekisou(): Promise<void> {
+  if (!props.gekisou?.enabled || !gekisouResources) return;
+  const target = renderer;
+  const source = await gekisouResources.load(playerLifetime.signal);
+  if (destroyed || target !== renderer) return;
+  gekisouSource = source;
+  gekisouPlayback?.setSource(source);
+}
+
+function composeFrame(timeMs: number, snapshot: ReturnType<CassiopeiaSessionPort["snapshot"]>): RenderFrame {
+  if (renderer && gekisouPlayback?.plan) {
+    const context = gekisouPlayback.context;
+    context.width = Math.max(1, root.value?.clientWidth ?? 1);
+    context.height = Math.max(1, root.value?.clientHeight ?? 1);
+    renderer.copyStageWorldToClip(context.worldToClip);
+  }
+  const frame = applyTitleIntroduction(frameBuilder!.buildReusable(timeMs, snapshot, props.settings));
+  if (renderer && gekisouPlayback?.plan)
+    gekisouPlayback.appendStage(frame, snapshot.watchVisualState?.sampledTimeMs ?? timeMs);
+  return frame;
+}
+
 function renderFrame(): void {
   if (!renderer || !session || !frameBuilder) return;
   const realtimeMs = performance.now();
@@ -675,7 +767,7 @@ function renderFrame(): void {
   }
   if (perfProbe) {
     const buildStarted = performance.now();
-    const frame = applyTitleIntroduction(frameBuilder.buildReusable(timeMs, snapshot, props.settings));
+    const frame = composeFrame(timeMs, snapshot);
     const renderStarted = performance.now();
     renderer.render(frame);
     const renderedAt = performance.now();
@@ -689,7 +781,7 @@ function renderFrame(): void {
     const summary = perfProbe.takeSummary(renderedAt);
     if (summary) emit("perf", summary);
   } else {
-    renderer.render(applyTitleIntroduction(frameBuilder.buildReusable(timeMs, snapshot, props.settings)));
+    renderer.render(composeFrame(timeMs, snapshot));
   }
   lastRenderedTimeMs = timeMs;
   dirty = false;
@@ -765,8 +857,11 @@ function resetTimeline(timeMs: number): void {
   frameComboUpdated = false;
   frameAddedCombo = 0;
   try {
-    frameBuilder.reset();
-    session.reset(timeMs);
+    const replay = props.mode === "watch" ? props.watchVisualReplay : undefined;
+    session.reset(timeMs, replay);
+    if (props.mode === "watch" && gekisouPlayback?.plan)
+      frameBuilder.resetWatch(timeMs, replay, session.getWatchHistory?.());
+    else frameBuilder.reset();
   } finally {
     suppressEffects = false;
   }
@@ -900,6 +995,7 @@ function finishExternalPlaybackHandoff(generation: number): void {
 }
 
 async function play(): Promise<void> {
+  if (presentationPending.value) throw new Error("chart-presentation-loading");
   if (titleIntroductionInFlight()) return;
   if (finishDirectionLifecycle.pending) {
     emitFinishDirectionTransition(finishDirectionLifecycle.start(performance.now()));
@@ -1120,6 +1216,9 @@ async function initialize(): Promise<void> {
       candidate.dispose();
       return;
     }
+    configureGekisouResources(candidate);
+    if (props.gekisou?.enabled) await prepareGekisou();
+    if (destroyed || renderer !== candidate) return;
     attachInternalAudio();
     introductionLifecycle.reset();
     introductionHandoff.cancel();
@@ -1170,8 +1269,14 @@ watch(
 watch(
   () => props.mode,
   (mode) => {
-    session?.setMode(mode);
     pause();
+    try {
+      if (gekisouPlayback?.plan) attachSession();
+      else session?.setMode(mode);
+    } catch (reason) {
+      reportError(reason);
+      return;
+    }
     attachTitleIntroduction();
     if (externalClockControlled.value) {
       skipTitleIntroduction();
@@ -1209,6 +1314,44 @@ watch([() => props.chart, () => props.visualProfiles], ([chart]) => {
   } else seek(0, false);
   emit("duration", presentationDurationMs() / 1000);
 });
+async function updateGekisouConfiguration(): Promise<void> {
+  if (!renderer || !ready.value) return;
+  const revision = ++gekisouRevision,
+    target = renderer,
+    chart = props.chart;
+  const position = presentationTimeMs();
+  presentationPending.value = true;
+  try {
+    const presentation = new OurNotesGekisouPlayback(
+      props.chart,
+      props.gekisou,
+      () => crypto.getRandomValues(gekisouSeed)[0]!,
+    );
+    pause();
+    await prepareGekisou();
+    if (destroyed || revision !== gekisouRevision || target !== renderer || chart !== props.chart) return;
+    attachSession(presentation);
+    resetTimeline(position - props.bgmOffsetMs);
+    if (failed.value === presentationError) failed.value = null;
+    presentationError = undefined;
+  } catch (reason) {
+    if (!destroyed && revision === gekisouRevision && !playerLifetime.signal.aborted) {
+      presentationError = errorOf(reason);
+      reportError(presentationError);
+    }
+  } finally {
+    if (revision === gekisouRevision) presentationPending.value = false;
+  }
+}
+
+watch(
+  () => props.gekisou,
+  () => {
+    presentationUpdate = updateGekisouConfiguration();
+  },
+  { deep: true },
+);
+
 watch(
   () => props.effectSeed,
   () => {
@@ -1382,6 +1525,7 @@ defineExpose<ChartPlayerExpose>({
   restart,
   resize,
   getPresentation: () => (ready.value && !destroyed ? renderer : undefined),
+  preparePresentation: () => presentationUpdate,
 });
 
 onMounted(() => nextTick(initialize));
@@ -1390,6 +1534,14 @@ onBeforeUnmount(() => {
   ownedPluginRuntime = undefined;
   hapticFeedback.stop();
   destroyed = true;
+  gekisouRevision++;
+  playerLifetime.abort();
+  gekisouResources?.dispose();
+  gekisouResources = undefined;
+  gekisouPlayback = undefined;
+  gekisouSource = undefined;
+  session?.dispose?.();
+  previousAttachedSession = undefined;
   playbackGate.cancel();
   introductionHandoff.cancel();
   titleIntroductionPlaybackGeneration = undefined;
@@ -1435,6 +1587,7 @@ onBeforeUnmount(() => {
       class="our-notes-player__pause-hit"
       type="button"
       :aria-label="pauseLabel"
+      :disabled="presentationPending"
       @pointerdown.stop
       @click.stop="pause"
     ></button>

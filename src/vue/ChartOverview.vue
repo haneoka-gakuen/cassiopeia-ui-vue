@@ -419,12 +419,19 @@ function drawRibbons(
   panelStart: number,
   panelEnd: number,
 ): void {
-  const guideStyle = createChartCanvasRibbonStyle(context, "guide", height, laneWidth.value);
-  const slideStyle = createChartCanvasRibbonStyle(context, "slide", height, laneWidth.value);
   for (const line of chartModel.value.lines) {
-    const style = line.kind === "guide" ? guideStyle : slideStyle;
     const nodes = line.nodes;
     if (nodes.length < 2 || nodes.at(-1)!.timeMs <= panelStart || nodes[0]!.timeMs >= panelEnd) continue;
+    const top = yForTime(nodes.at(-1)!.timeMs, panel, height);
+    const lineHeight = yForTime(nodes[0]!.timeMs, panel, height) - top;
+    const style = createChartCanvasRibbonStyle(
+      context,
+      line.kind === "guide" ? "guide" : "slide",
+      lineHeight,
+      laneWidth.value,
+      top,
+      props.assets.slideLineStyle,
+    );
     for (let index = 0; index < nodes.length - 1; index++) {
       const head = nodes[index]!;
       const tail = nodes[index + 1]!;

@@ -30,6 +30,8 @@ export interface ChartPlayerExpose {
    */
   restart(): void;
   resize(): void;
+  /** Waits for an owner-requested presentation configuration to be preloaded and attached. */
+  preparePresentation(): Promise<void>;
   /** Native CSS-coordinate projection and sprite-mesh picking on this player; absent before ready or after disposal. */
   getPresentation(): NativeChartPresentation | undefined;
 }

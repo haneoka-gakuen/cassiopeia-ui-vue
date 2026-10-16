@@ -76,6 +76,17 @@ skin's asset manifest.
 | `visualProfiles` | Per-chart visual profiles from the game data. | none |
 | `ariaLabel`, `pauseLabel`, `loadingLabel` | Accessible labels, already translated. | English |
 
+### Gekisou
+
+Pass `gekisou: { enabled: true, missionTypes }` using the song's Master mission data.
+The same Our Notes plan supplies automatic judgement rules, the mission HUD and stage.
+`effectMode` selects off (0), light (1) or standard (2), independently of graphics quality.
+The asset manifest's `presentationAssets` resolver maps the formal Source resources.
+`presentationResources` can provide host-owned JSON and URL transport; the default uses
+browser fetch. `watchVisualReplay` forwards the kernel's explicit source-clock contract
+for seek reconstruction. `preparePresentation()` resolves after a configuration change
+has loaded its resources and replaced the paused session.
+
 ### Methods (via `ref`)
 
 `play()`, `pause()`, `seek(seconds)`, `restart()`, `resize()`, and

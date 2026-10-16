@@ -1,7 +1,13 @@
 packages:
   - "."
+  - ".deps/cassiopeia"
+  - ".deps/our-notes"
+  - ".deps/renderer-three"
+  - ".deps/host-web"
 
 autoInstallPeers: false
+linkWorkspacePackages: true
 
 allowBuilds:
   esbuild: true
+  wasm-pack: true
