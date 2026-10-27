@@ -299,6 +299,18 @@ export class ChartCanvasSkin {
       scale,
     });
     const mainSlices = noteSkinTightHorizontalSlices(main.region);
+    // Join the sliced body beneath the caps in one draw. Separate fractional
+    // Canvas quads otherwise leave a dark antialiasing seam at each join.
+    const transform = context.getTransform();
+    const seam = 1 / (Math.hypot(transform.a, transform.b) * nativeToCss);
+    const bodyLeft = bodyLayout.mainLeft.centerX - bodyLayout.mainLeft.width / 2;
+    const bodyRight = bodyLayout.mainRight.centerX + bodyLayout.mainRight.width / 2;
+    drawTightSpriteQuad(context, main, {
+      centerX: (bodyLeft + bodyRight) / 2,
+      centerY: 0,
+      width: bodyRight - bodyLeft + seam * 2,
+      height: bodyLayout.mainMiddle.height,
+    }, note.centerX, note.centerY, nativeToCss, mainSlices[1]);
     if (left) drawTightSpriteQuad(context, left, bodyLayout.left, note.centerX, note.centerY, nativeToCss);
     drawTightSpriteQuad(context, main, bodyLayout.mainLeft, note.centerX, note.centerY, nativeToCss, mainSlices[0]);
     drawTightSpriteQuad(context, main, bodyLayout.mainMiddle, note.centerX, note.centerY, nativeToCss, mainSlices[1]);
