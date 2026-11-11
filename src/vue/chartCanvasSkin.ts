@@ -1,6 +1,7 @@
 import { CanvasSpriteAtlas } from "@haneoka/cassiopeia-renderer-three";
 import {
   OUR_NOTES_LIVE_GEOMETRY,
+  OUR_NOTES_BUNDLED_NOTE_ATLASES,
   OUR_NOTES_SLIDE_LINE_STYLES,
   type OurNotesAssetManifest,
   type OurNotesSlideLineStyle,
@@ -115,7 +116,7 @@ const canvasOverlaySpriteNames = new Set([
   ),
 ]);
 
-function canvasAtlasManifest(assets: OurNotesAssetManifest): SpriteAtlasManifest {
+function canvasAtlasManifest(assets: Pick<OurNotesAssetManifest, "noteAtlas">): SpriteAtlasManifest {
   return {
     ...assets.noteAtlas,
     sprites: assets.noteAtlas.sprites.filter(
@@ -209,6 +210,20 @@ export class ChartCanvasSkin {
       assets.source.noteSkin,
       assets.slideLineStyle,
     );
+  }
+
+  static async loadBundled(noteSkin: OurNotesAssetManifest["source"]["noteSkin"] = "skin001"): Promise<ChartCanvasSkin> {
+    const bundled = OUR_NOTES_BUNDLED_NOTE_ATLASES[noteSkin];
+    const atlas = await CanvasSpriteAtlas.load(canvasAtlasManifest({
+      noteAtlas: {
+        id: noteSkin,
+        textureUrl: bundled.textureUrl,
+        atlasMetadataUrl: "",
+        atlasMetadata: bundled.atlasMetadata,
+        sprites: Object.entries(bundled.spriteMetadata).map(([name, metadata]) => ({ name, metadataUrl: "", metadata })),
+      },
+    }));
+    return new ChartCanvasSkin(atlas, [0, 2, 4, 6, 8, 10, 12].map((distance, value) => ({ distance, value })), noteSkin, OUR_NOTES_SLIDE_LINE_STYLES[noteSkin]);
   }
 
   drawNote(context: CanvasRenderingContext2D, note: ChartCanvasNote): boolean {
